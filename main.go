@@ -69,7 +69,7 @@ func handleUpdates(bot *tgbotapi.BotAPI, updates tgbotapi.UpdatesChannel) {
 func handleCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	switch message.Command() {
 	case "start":
-		sendMessage(bot, message.Chat.ID, "Привет, дружок! 🌟 Я твой помощник по капсулам времени! Напиши свою капсулу времени, и я сохраню её для тебя!", getReplyMarkup())
+		sendMessage(bot, message.Chat.ID, "Привет, друг! 🌟 Я твой помощник по капсулам времени! Напиши своё пожелание, и я сохраню его для тебя!", getReplyMarkup())
 	case "help":
 		sendMessage(bot, message.Chat.ID, "🤗 Привет! Я здесь, чтобы помочь тебе с капсулами времени! Вот что ты можешь сделать:\n\n"+
 			"1️⃣ **Написать капсулу**: Нажми на кнопку 'Написать капсулу', и я помогу тебе сохранить твои мысли и мечты на будущее!\n\n"+
@@ -82,7 +82,7 @@ func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	switch message.Text {
 	case "Написать капсулу":
 		waitingForCapsule[message.Chat.ID] = true
-		sendMessage(bot, message.Chat.ID, "Ура! 🎉 Пожалуйста, напиши свою капсулу времени. Я с нетерпением жду твоих слов!", nil)
+		sendMessage(bot, message.Chat.ID, "🎉 Пожалуйста, напиши свою капсулу времени. Я с нетерпением жду твоих слов!", nil)
 
 	case "Получить капсулу":
 		handleRetrieveCapsule(bot, message.From.ID)
@@ -91,6 +91,12 @@ func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 		if waitingForCapsule[message.Chat.ID] {
 			messages[message.Chat.ID] = message.Text
 			delete(waitingForCapsule, message.Chat.ID)
+			if _, err := bot.DeleteMessage(tgbotapi.DeleteMessageConfig{
+				ChatID:    message.Chat.ID,
+				MessageID: message.MessageID,
+			}); err != nil {
+				log.Printf("Ошибка удаления сообщения: %v", err)
+			}
 			sendMessage(bot, message.Chat.ID, "Капсула времени сохранена! 🎊 Теперь она будет ждать своего времени!", nil)
 		} else {
 			sendMessage(bot, message.Chat.ID, "Ой, я не совсем понял. Можешь попробовать еще раз? 🤔 Или можешь использовать /help для моей помощи", nil)
@@ -104,7 +110,7 @@ func handleRetrieveCapsule(bot *tgbotapi.BotAPI, userId int) {
 	if capsule := getCapsule(userId); capsule != "" {
 		if remainingTime > 0 {
 			daysRemaining := int(remainingTime.Hours() / 24)
-			sendMessage(bot, int64(userId), fmt.Sprintf("Ой, подожди еще %d дней до 2 сентября 2025 года! ⏳ Но не переживай, твоя капсула скоро будет готова!", daysRemaining), nil)
+			sendMessage(bot, int64(userId), fmt.Sprintf("Ой, подожди еще %d дней до 2 сентября 2025 года! ⏳ И тогда я оповещу тебя!", daysRemaining), nil)
 		} else {
 			sendCapsule(bot, userId)
 		}
@@ -140,7 +146,7 @@ func getCapsule(userId int) string {
 func sendCapsule(bot *tgbotapi.BotAPI, userId int) {
 	capsule := getCapsule(userId)
 	if capsule != "" {
-		sendMessage(bot, int64(userId), fmt.Sprintf("Вот твоя капсула времени🎈: %s. Надеюсь, она принесет тебе радость!", capsule), nil)
+		sendMessage(bot, int64(userId), fmt.Sprintf("Твоя капсула времени: %s Надеюсь, эти слова пришли в реальность🎈", capsule), nil)
 		delete(messages, int64(userId))
 	}
 }
