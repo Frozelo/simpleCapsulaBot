@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -13,10 +12,13 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
 )
 
+const (
+	dateFormat           = "2006-Jan-02"
+	notificationInterval = 30 * time.Second
+)
+
 var (
-	shortForm         = "2006-Jan-02"
 	fixedDate         time.Time
-	notifyTime        = 30 * time.Second
 	messages          = make(map[int64]string)
 	waitingForCapsule = make(map[int64]bool)
 )
@@ -31,20 +33,13 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	fixedDate, err = time.Parse(shortForm, "2025-Sep-02")
+	fixedDate, err = time.Parse(dateFormat, "2025-Sep-02")
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Ошибка парсинга даты: %v", err)
 	}
+	log.Printf("Фиксированная дата: %s", fixedDate)
 
-	go func(ctx context.Context, bot *tgbotapi.BotAPI) {
-		if err = startNotifier(ctx, bot); err != nil {
-			if !errors.Is(err, context.Canceled) {
-				log.Printf("Error starting notifier: %v", err)
-				return
-			}
-			log.Printf("[INFO] notifier stopped")
-		}
-	}(ctx, bot)
+	go startNotifier(ctx, bot)
 
 	updateConfig := tgbotapi.NewUpdate(0)
 	updateConfig.Timeout = 60
@@ -54,6 +49,10 @@ func main() {
 		log.Fatalf("Ошибка получения обновлений: %v", err)
 	}
 
+	handleUpdates(bot, updates)
+}
+
+func handleUpdates(bot *tgbotapi.BotAPI, updates tgbotapi.UpdatesChannel) {
 	for update := range updates {
 		if update.Message == nil {
 			continue
@@ -70,100 +69,99 @@ func main() {
 func handleCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	switch message.Command() {
 	case "start":
-		msg := tgbotapi.NewMessage(message.Chat.ID, "Привет, дружок! 🌟 Я твой помощник по капсулам времени! Напиши свою капсулу времени, и я сохраню её для тебя!")
-		msg.ReplyMarkup = getReplyMarkup()
-		sendMessage(bot, msg)
+		sendMessage(bot, message.Chat.ID, "Привет, дружок! 🌟 Я твой помощник по капсулам времени! Напиши свою капсулу времени, и я сохраню её для тебя!", getReplyMarkup())
 	case "help":
-		msg := tgbotapi.NewMessage(message.Chat.ID, "🤗 Привет! Я здесь, чтобы помочь тебе с капсулами времени! Вот что ты можешь сделать:\n\n"+
+		sendMessage(bot, message.Chat.ID, "🤗 Привет! Я здесь, чтобы помочь тебе с капсулами времени! Вот что ты можешь сделать:\n\n"+
 			"1️⃣ **Написать капсулу**: Нажми на кнопку 'Написать капсулу', и я помогу тебе сохранить твои мысли и мечты на будущее!\n\n"+
 			"2️⃣ **Получить капсулу**: Когда придет время, ты сможешь получить свою капсулу, нажав на кнопку 'Получить капсулу'. Я напомню тебе о ней!\n\n"+
-			"Если у тебя есть вопросы, просто напиши мне, и я постараюсь помочь! 🌈")
-		sendMessage(bot, msg)
+			"Если у тебя есть вопросы, просто напиши мне, и я постараюсь помочь! 🌈", nil)
 	}
-
 }
 
 func handleMessage(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	switch message.Text {
 	case "Написать капсулу":
-		msg := tgbotapi.NewMessage(message.Chat.ID, "Ура! 🎉 Пожалуйста, напиши свою капсулу времени. Я с нетерпением жду твоих слов!")
-		sendMessage(bot, msg)
 		waitingForCapsule[message.Chat.ID] = true
+		sendMessage(bot, message.Chat.ID, "Ура! 🎉 Пожалуйста, напиши свою капсулу времени. Я с нетерпением жду твоих слов!", nil)
 
 	case "Получить капсулу":
-		userId := message.From.ID
-		SendMessageCapsule(bot, userId)
+		handleRetrieveCapsule(bot, message.From.ID)
+
 	default:
-		if waiting, ok := waitingForCapsule[message.Chat.ID]; ok && waiting {
+		if waitingForCapsule[message.Chat.ID] {
 			messages[message.Chat.ID] = message.Text
-			if _, err := bot.DeleteMessage(tgbotapi.DeleteMessageConfig{
-				ChatID:    message.Chat.ID,
-				MessageID: message.MessageID,
-			}); err != nil {
-				log.Printf("Ошибка удаления сообщения: %v", err)
-			}
-
-			msg := tgbotapi.NewMessage(message.Chat.ID, "Капсула времени сохранена! 🎊 Теперь она будет ждать своего времени!")
-			sendMessage(bot, msg)
 			delete(waitingForCapsule, message.Chat.ID)
-
+			sendMessage(bot, message.Chat.ID, "Капсула времени сохранена! 🎊 Теперь она будет ждать своего времени!", nil)
 		} else {
-			msg := tgbotapi.NewMessage(message.Chat.ID, "Ой, я не совсем понял. Можешь попробовать еще раз? 🤔 Или можешь использовать /help для моей помощи")
-			sendMessage(bot, msg)
+			sendMessage(bot, message.Chat.ID, "Ой, я не совсем понял. Можешь попробовать еще раз? 🤔 Или можешь использовать /help для моей помощи", nil)
 		}
 	}
 }
 
-func getReplyMarkup() tgbotapi.ReplyKeyboardMarkup {
-	btn1 := tgbotapi.NewKeyboardButton("Написать капсулу")
-	btn2 := tgbotapi.NewKeyboardButton("Получить капсулу")
+func handleRetrieveCapsule(bot *tgbotapi.BotAPI, userId int) {
+	remainingTime := time.Until(fixedDate)
 
-	keyboard := tgbotapi.NewReplyKeyboard(
-		tgbotapi.NewKeyboardButtonRow(btn1, btn2),
-	)
-	return keyboard
+	if capsule := getCapsule(userId); capsule != "" {
+		if remainingTime > 0 {
+			daysRemaining := int(remainingTime.Hours() / 24)
+			sendMessage(bot, int64(userId), fmt.Sprintf("Ой, подожди еще %d дней до 2 сентября 2025 года! ⏳ Но не переживай, твоя капсула скоро будет готова!", daysRemaining), nil)
+		} else {
+			sendCapsule(bot, userId)
+		}
+	} else {
+		sendMessage(bot, int64(userId), "У тебя еще нет капсулы времени. Давай напишем одну вместе! ✍️", nil)
+	}
 }
 
-func sendMessage(bot *tgbotapi.BotAPI, msg tgbotapi.MessageConfig) {
+func getReplyMarkup() tgbotapi.ReplyKeyboardMarkup {
+	return tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("Написать капсулу"),
+			tgbotapi.NewKeyboardButton("Получить капсулу"),
+		),
+	)
+}
+
+func sendMessage(bot *tgbotapi.BotAPI, chatID int64, text string, replyMarkup interface{}) {
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = replyMarkup
 	if _, err := bot.Send(msg); err != nil {
 		log.Printf("Ошибка отправки сообщения: %v", err)
 	}
 }
 
-func SendMessageCapsule(bot *tgbotapi.BotAPI, userId int) {
-	if capsule, ok := messages[int64(userId)]; ok {
-		remainingTime := time.Until(fixedDate)
-		if remainingTime > 0 {
-			daysRemaining := int(remainingTime.Hours() / 24)
-			msg := tgbotapi.NewMessage(int64(userId),
-				fmt.Sprintf("Ой, подожди еще %d дней до 2 сентября 2025 года! ⏳ Но не переживай, твоя капсула скоро будет готова!", daysRemaining))
-			sendMessage(bot, msg)
-		} else {
-			msg := tgbotapi.NewMessage(int64(userId), fmt.Sprintf("Вот твоя капсула времени: %s 🎈 Надеюсь, она принесет тебе радость!", capsule))
-			sendMessage(bot, msg)
-		}
-	} else {
-		msg := tgbotapi.NewMessage(int64(userId), "У тебя еще нет капсулы времени. Давай напишем одну вместе! ✍️")
-		sendMessage(bot, msg)
+func getCapsule(userId int) string {
+	if capsule, exists := messages[int64(userId)]; exists {
+		return capsule
+	}
+	return ""
+}
+
+func sendCapsule(bot *tgbotapi.BotAPI, userId int) {
+	capsule := getCapsule(userId)
+	if capsule != "" {
+		sendMessage(bot, int64(userId), fmt.Sprintf("Вот твоя капсула времени🎈: %s. Надеюсь, она принесет тебе радость!", capsule), nil)
+		delete(messages, int64(userId))
 	}
 }
 
-func startNotifier(ctx context.Context, bot *tgbotapi.BotAPI) error {
-	ticker := time.NewTicker(notifyTime)
+func startNotifier(ctx context.Context, bot *tgbotapi.BotAPI) {
+	ticker := time.NewTicker(notificationInterval)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ticker.C:
-			Notify(bot)
+			notifyUsers(bot)
 		case <-ctx.Done():
-			return ctx.Err()
+			log.Println("[INFO] Notifier stopped")
+			return
 		}
 	}
-
 }
 
-func Notify(bot *tgbotapi.BotAPI) {
-	for userId, _ := range messages {
-		SendMessageCapsule(bot, int(userId))
+func notifyUsers(bot *tgbotapi.BotAPI) {
+	for userId := range messages {
+		sendCapsule(bot, int(userId))
 	}
 }
